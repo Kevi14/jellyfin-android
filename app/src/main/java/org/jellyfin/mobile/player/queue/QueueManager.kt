@@ -5,14 +5,18 @@ import androidx.annotation.CheckResult
 import androidx.core.net.toUri
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jellyfin.mobile.data.dao.DownloadDao
 import org.jellyfin.mobile.downloads.DownloadFileType
+import org.jellyfin.mobile.app.SUBTITLE_CACHE
 import org.jellyfin.mobile.player.PlayerException
 import org.jellyfin.mobile.player.PlayerViewModel
 import org.jellyfin.mobile.player.deviceprofile.DeviceProfileBuilder
@@ -23,6 +27,7 @@ import org.jellyfin.mobile.player.source.LocalJellyfinMediaSource
 import org.jellyfin.mobile.player.source.MediaSourceResolver
 import org.jellyfin.mobile.player.source.PlaybackDetails
 import org.jellyfin.mobile.player.source.RemoteJellyfinMediaSource
+import org.jellyfin.mobile.player.source.SubtitlePreloader
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.videosApi
 import org.jellyfin.sdk.api.operations.VideosApi
@@ -35,6 +40,7 @@ import org.jellyfin.sdk.model.serializer.toUUIDOrNull
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import org.koin.core.component.inject
+import org.koin.core.qualifier.named
 import timber.log.Timber
 import java.util.UUID
 import kotlin.time.Duration
@@ -383,10 +389,27 @@ class QueueManager(
             .setMediaId(source.itemId.toString())
             .setUri(url)
             .setMimeType(forcedMimeType)
-            .setSubtitleConfigurations(externalSubtitleConfigurations)
             .build()
 
-        return factory.createMediaSource(mediaItem)
+        val videoSource = factory.createMediaSource(mediaItem)
+        if (externalSubtitleConfigurations.isEmpty()) {
+            return videoSource
+        }
+
+        // Build the external subtitle sidecars ourselves (mirroring DefaultMediaSourceFactory) so
+        // they are served from a dedicated read-write cache. This preserves the track IDs that
+        // TrackSelectionHelper matches on, while letting SubtitlePreloader warm the same cache.
+        val subtitleSourceFactory = SingleSampleMediaSource.Factory(
+            get<CacheDataSource.Factory>(named(SUBTITLE_CACHE)),
+        )
+        val subtitleSources = externalSubtitleConfigurations.map { configuration ->
+            subtitleSourceFactory.createMediaSource(configuration, C.TIME_UNSET)
+        }.toTypedArray()
+
+        // Aggressively pre-download every external subtitle so switching tracks is instant.
+        get<SubtitlePreloader>().preload(source)
+
+        return MergingMediaSource(videoSource, *subtitleSources)
     }
 
     /**

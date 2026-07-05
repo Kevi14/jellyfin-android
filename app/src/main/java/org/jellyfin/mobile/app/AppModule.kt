@@ -12,6 +12,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.hls.HlsMediaSource
@@ -39,6 +40,7 @@ import org.jellyfin.mobile.player.interaction.PlayerEvent
 import org.jellyfin.mobile.player.mediasegments.MediaSegmentRepository
 import org.jellyfin.mobile.player.qualityoptions.QualityOptionsProvider
 import org.jellyfin.mobile.player.source.MediaSourceResolver
+import org.jellyfin.mobile.player.source.SubtitlePreloader
 import org.jellyfin.mobile.player.ui.PlayerFragment
 import org.jellyfin.mobile.setup.ConnectionHelper
 import org.jellyfin.mobile.utils.Constants
@@ -58,7 +60,9 @@ import org.koin.dsl.module
 import java.io.File
 
 const val PLAYER_EVENT_CHANNEL = "PlayerEventChannel"
+const val SUBTITLE_CACHE = "SubtitleCache"
 private const val TS_SEARCH_PACKETS = 1800
+private const val SUBTITLE_CACHE_SIZE = 128L * 1024 * 1024 // 128 MiB
 
 val applicationModule = module {
     single { AppPreferences(androidApplication()) }
@@ -154,6 +158,30 @@ val applicationModule = module {
                 spec.key ?: spec.uri.extractId()
             }
     }
+
+    // Dedicated read-write cache for aggressive subtitle preloading. Kept separate from the
+    // download cache above (which is intentionally read-only) and bounded via an LRU evictor.
+    single<Cache>(named(SUBTITLE_CACHE)) {
+        val subtitlePath = File(get<Context>().cacheDir, "subtitles")
+        if (!subtitlePath.exists()) {
+            subtitlePath.mkdirs()
+        }
+        SimpleCache(
+            subtitlePath,
+            LeastRecentlyUsedCacheEvictor(SUBTITLE_CACHE_SIZE),
+            get<DatabaseProvider>(),
+        )
+    }
+
+    single<CacheDataSource.Factory>(named(SUBTITLE_CACHE)) {
+        // Read-write: used both to preload subtitles and to serve the subtitle sidecars.
+        CacheDataSource.Factory()
+            .setCache(get<Cache>(named(SUBTITLE_CACHE)))
+            .setUpstreamDataSourceFactory(get<DataSource.Factory>())
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+
+    single { SubtitlePreloader(get(), get<CacheDataSource.Factory>(named(SUBTITLE_CACHE))) }
 
     single<MediaSource.Factory> {
         val context: Context = get()
