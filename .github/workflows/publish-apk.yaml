@@ -1,0 +1,35 @@
+name: Publish APK
+
+# Repackages the APK from the latest successful feature/libass build into a
+# GitHub Release, so it can be downloaded directly (no login, no zip) and
+# sideloaded on a phone. Run manually from the Actions tab.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download APK from latest feature/libass build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RID=$(gh run list --repo "${{ github.repository }}" --branch feature/libass \
+            --workflow "App / Build" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          echo "Using build run $RID"
+          gh run download "$RID" --repo "${{ github.repository }}" -n build-artifacts -D apk
+          ls -lhR apk
+      - name: Publish/replace release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete tier2-libass --repo "${{ github.repository }}" --yes --cleanup-tag || true
+          gh release create tier2-libass apk/*.apk \
+            --repo "${{ github.repository }}" \
+            --target feature/libass \
+            --title "Tier 2: subtitle preload + libass (debug)" \
+            --notes "Debug APK — aggressive subtitle preload/cache + libass ASS/SSA rendering. Sideload on Android (allow install from unknown sources)."
