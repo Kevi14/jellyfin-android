@@ -7,6 +7,7 @@ import android.media.AudioManager
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import androidx.core.content.getSystemService
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -17,6 +18,8 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.Clock
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -38,6 +41,7 @@ import org.jellyfin.mobile.BuildConfig
 import org.jellyfin.mobile.R
 import org.jellyfin.mobile.app.AppPreferences
 import org.jellyfin.mobile.app.PLAYER_EVENT_CHANNEL
+import org.jellyfin.mobile.app.SUBTITLE_CACHE
 import org.jellyfin.mobile.player.interaction.PlayerEvent
 import org.jellyfin.mobile.player.interaction.PlayerLifecycleObserver
 import org.jellyfin.mobile.player.interaction.PlayerMediaSessionCallback
@@ -45,6 +49,7 @@ import org.jellyfin.mobile.player.interaction.PlayerNotificationHelper
 import org.jellyfin.mobile.player.mediasegments.MediaSegmentAction
 import org.jellyfin.mobile.player.mediasegments.MediaSegmentRepository
 import org.jellyfin.mobile.player.queue.QueueManager
+import org.jellyfin.mobile.player.source.ExternalSubtitleStream
 import org.jellyfin.mobile.player.source.JellyfinMediaSource
 import org.jellyfin.mobile.player.source.RemoteJellyfinMediaSource
 import org.jellyfin.mobile.player.ui.DecoderType
@@ -90,9 +95,13 @@ import org.koin.core.component.get
 import org.koin.core.component.inject
 import org.koin.core.qualifier.named
 import timber.log.Timber
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+
+private const val SUBTITLE_BUFFER_SIZE = 64 * 1024
 
 @Suppress("TooManyFunctions")
 class PlayerViewModel(application: Application) : AndroidViewModel(application), KoinComponent, Player.Listener {
@@ -131,6 +140,50 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
 
     private val _error = MutableLiveData<String>()
     val error: LiveData<String> = _error
+
+    // libass ASS/SSA rendering. Exposes the raw subtitle bytes for the currently selected external
+    // ASS track (or null to clear), which LibassSubtitleView renders in place of ExoPlayer's SsaParser.
+    private val subtitleCacheDataSourceFactory: CacheDataSource.Factory = get(named(SUBTITLE_CACHE))
+    private val _libassSubtitle = MutableLiveData<ByteArray?>()
+    val libassSubtitle: LiveData<ByteArray?> get() = _libassSubtitle
+    private var libassLoadJob: Job? = null
+
+    /**
+     * Route an external ASS/SSA subtitle to the libass overlay, or clear it when [stream] is null.
+     * The bytes are typically already in the subtitle preload cache, so this resolves instantly.
+     */
+    fun setLibassSubtitle(stream: ExternalSubtitleStream?) {
+        libassLoadJob?.cancel()
+        if (stream == null) {
+            _libassSubtitle.postValue(null)
+            return
+        }
+        libassLoadJob = viewModelScope.launch {
+            _libassSubtitle.postValue(loadSubtitleBytes(stream))
+        }
+    }
+
+    private suspend fun loadSubtitleBytes(stream: ExternalSubtitleStream): ByteArray? =
+        withContext(Dispatchers.IO) {
+            val uri = apiClient.createUrl(stream.deliveryUrl).toUri()
+            val dataSource = subtitleCacheDataSourceFactory.createDataSource()
+            try {
+                dataSource.open(DataSpec(uri))
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(SUBTITLE_BUFFER_SIZE)
+                while (true) {
+                    val read = dataSource.read(buffer, 0, buffer.size)
+                    if (read == C.RESULT_END_OF_INPUT) break
+                    output.write(buffer, 0, read)
+                }
+                output.toByteArray()
+            } catch (e: IOException) {
+                Timber.w(e, "Failed to load ASS subtitle for libass")
+                null
+            } finally {
+                dataSource.close()
+            }
+        }
 
     private val eventLogger = EventLogger()
     private var analyticsCollector = buildAnalyticsCollector()

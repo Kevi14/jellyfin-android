@@ -132,6 +132,7 @@ class TrackSelectionHelper(
         // Apply selection in player
         if (subtitleStream == null) {
             // If no subtitle is selected, simply clear the selection and disable the subtitle renderer
+            viewModel.setLibassSubtitle(null)
             trackSelector.clearSelectionAndDisableRendererByType(C.TRACK_TYPE_TEXT)
             return true
         }
@@ -144,6 +145,8 @@ class TrackSelectionHelper(
                 return true
             }
             SubtitleDeliveryMethod.EMBED -> {
+                // Embedded ASS is not handled by libass (no raw file); fall back to the stock renderer.
+                viewModel.setLibassSubtitle(null)
                 // For embedded subtitles, we can match by the index of this stream in all embedded streams.
                 val embeddedStreamIndex = mediaSource.getEmbeddedStreamIndex(subtitleStream)
                 val subtitleGroup = player.currentTracks.groups.getOrNull(embeddedStreamIndex) ?: return false
@@ -151,6 +154,19 @@ class TrackSelectionHelper(
                 return trackSelector.selectTrackByTypeAndGroup(C.TRACK_TYPE_TEXT, subtitleGroup.mediaTrackGroup)
             }
             SubtitleDeliveryMethod.EXTERNAL -> {
+                // Render external ASS/SSA via the libass overlay (full styling) instead of ExoPlayer's
+                // limited SsaParser. We disable the text renderer so the two don't render on top of each other.
+                val codec = subtitleStream.codec?.lowercase()
+                if (codec == "ass" || codec == "ssa") {
+                    val externalStream = mediaSource.externalSubtitleStreams
+                        .firstOrNull { it.index == subtitleStream.index }
+                    if (externalStream != null) {
+                        viewModel.setLibassSubtitle(externalStream)
+                        trackSelector.clearSelectionAndDisableRendererByType(C.TRACK_TYPE_TEXT)
+                        return true
+                    }
+                }
+                viewModel.setLibassSubtitle(null)
                 // For external subtitles, we can simply match the ID that we set when creating the player media source.
                 for (group in player.currentTracks.groups) {
                     val formatId = group.getTrackFormat(0).id ?: continue

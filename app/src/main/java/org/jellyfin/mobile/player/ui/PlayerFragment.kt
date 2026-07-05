@@ -100,9 +100,17 @@ class PlayerFragment : Fragment(), BackPressInterceptor {
         // Observe ViewModel
         viewModel.player.observe(this) { player ->
             playerView.player = player
+            playerBinding.libassSubtitleView.setPlayer(player)
             // Automatically close fragment, unless we're in PiP mode
             if (player == null && !(AndroidVersion.isAtLeastN && requireActivity().isInPictureInPictureMode)) {
                 parentFragmentManager.popBackStack()
+            }
+        }
+        viewModel.libassSubtitle.observe(this) { assBytes ->
+            if (assBytes != null) {
+                playerBinding.libassSubtitleView.setTrack(assBytes)
+            } else {
+                playerBinding.libassSubtitleView.clear()
             }
         }
         viewModel.playerState.observe(this) { playerState ->
