@@ -14,6 +14,7 @@ set -euo pipefail
 
 FRIBIDI_VERSION="1.0.13"
 FREETYPE_VERSION="2.13.2"
+HARFBUZZ_VERSION="7.3.0" # last HarfBuzz series that still ships an autotools configure
 LIBASS_VERSION="0.17.1"
 API="${ANDROID_API:-21}"
 
@@ -43,6 +44,7 @@ mkdir -p "$WORK"
 cd "$WORK"
 fetch "https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VERSION}/fribidi-${FRIBIDI_VERSION}.tar.xz" "fribidi.tar.xz"
 fetch "https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE_VERSION}.tar.xz" "freetype.tar.xz"
+fetch "https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz" "harfbuzz.tar.xz"
 fetch "https://github.com/libass/libass/releases/download/${LIBASS_VERSION}/libass-${LIBASS_VERSION}.tar.xz" "libass.tar.xz"
 
 for ABI in "${ABIS[@]}"; do
@@ -60,6 +62,7 @@ for ABI in "${ABIS[@]}"; do
     export STRIP="${TOOLCHAIN}/bin/llvm-strip"
     export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig"
     export CFLAGS="-fPIC -O2 -I${PREFIX}/include"
+    export CXXFLAGS="-fPIC -O2 -I${PREFIX}/include"
     export LDFLAGS="-L${PREFIX}/lib"
 
     # --- fribidi ---
@@ -76,12 +79,19 @@ for ABI in "${ABIS[@]}"; do
             --without-harfbuzz --without-png --without-brotli --without-zlib && \
         make -j"$(nproc)" && make install )
 
-    # --- libass ---
+    # --- harfbuzz (needs freetype; required by libass 0.17.x) ---
+    tar -C "$BUILD" -xf "${WORK}/harfbuzz.tar.xz"
+    ( cd "${BUILD}/harfbuzz-${HARFBUZZ_VERSION}" && \
+        ./configure --host="$TRIPLE" --prefix="$PREFIX" --enable-static --disable-shared \
+            --with-freetype --without-glib --without-gobject --without-cairo \
+            --without-icu --without-fontconfig --without-chafa && \
+        make -j"$(nproc)" && make install )
+
+    # --- libass (picks up freetype, fribidi and harfbuzz via PKG_CONFIG_PATH) ---
     tar -C "$BUILD" -xf "${WORK}/libass.tar.xz"
     ( cd "${BUILD}/libass-${LIBASS_VERSION}" && \
         ./configure --host="$TRIPLE" --prefix="$PREFIX" --enable-static --disable-shared \
-            --disable-fontconfig --disable-require-system-font-provider \
-            --disable-harfbuzz --disable-libunibreak && \
+            --disable-fontconfig --disable-require-system-font-provider && \
         make -j"$(nproc)" && make install )
 
     echo "== built libass for ${ABI} -> ${PREFIX} =="

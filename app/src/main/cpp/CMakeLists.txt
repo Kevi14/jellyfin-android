@@ -12,7 +12,7 @@ if(NOT EXISTS "${PREBUILT}/lib/libass.a")
         "Run scripts/build-libass.sh ${ANDROID_ABI} first.")
 endif()
 
-foreach(lib ass freetype fribidi)
+foreach(lib ass harfbuzz freetype fribidi)
     add_library(${lib} STATIC IMPORTED)
     set_target_properties(${lib} PROPERTIES IMPORTED_LOCATION "${PREBUILT}/lib/lib${lib}.a")
 endforeach()
@@ -24,7 +24,8 @@ target_include_directories(jellyfin_ass PRIVATE "${PREBUILT}/include")
 find_library(log-lib log)
 find_library(jnigraphics-lib jnigraphics)
 
-# Link order matters for static libs: ass depends on freetype and fribidi.
+# Link order matters for static libs: ass depends on harfbuzz, freetype and fribidi;
+# harfbuzz depends on freetype.
 target_link_libraries(jellyfin_ass
-    ass freetype fribidi
+    ass harfbuzz freetype fribidi
     ${log-lib} ${jnigraphics-lib} m z)
