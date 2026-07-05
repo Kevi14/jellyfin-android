@@ -14,6 +14,13 @@
         app:pause_icon="@drawable/ic_pause_black_42dp"
         app:play_icon="@drawable/ic_play_black_42dp" />
 
+    <!-- libass ASS/SSA subtitle overlay: above the video, below the UI controls. -->
+    <org.jellyfin.mobile.player.ui.libass.LibassSubtitleView
+        android:id="@+id/libass_subtitle_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <FrameLayout
         android:id="@+id/player_overlay"
         android:layout_width="match_parent"

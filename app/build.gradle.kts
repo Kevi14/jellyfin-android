@@ -29,6 +29,7 @@ kotlin {
 android {
     namespace = "org.jellyfin.mobile"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -37,6 +38,11 @@ android {
         versionCode = getVersionCode(versionName!!)
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+
+        // libass native renderer — only bundle the ABI(s) we cross-compile in CI.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     signingConfigs {
@@ -119,6 +125,15 @@ android {
 
     room {
         schemaDirectory("$projectDir/schemas")
+    }
+
+    // libass JNI bridge. Prebuilt static libs are produced by scripts/build-libass.sh,
+    // which must run before assembling (see the CI workflow).
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 }
 
