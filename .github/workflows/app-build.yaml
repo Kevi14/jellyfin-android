@@ -32,9 +32,18 @@ jobs:
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27c
-          local-cache: true
+          local-cache: false
       - name: Cross-compile libass
         run: bash scripts/build-libass.sh arm64-v8a
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Dump config.log on failure
+        if: failure()
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          ls -la "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/" | head -5 || true
+          f=$(find .libass-build -name config.log | head -1)
+          echo "== $f =="; tail -60 "$f" || true
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       - name: Assemble debug APKs
